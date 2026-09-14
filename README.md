@@ -200,12 +200,11 @@ docs/                   the documents listed above
 ---
  
 ## References
- 
-- Høiland-Jørgensen et al., *The eXpress Data Path: Fast Programmable Packet
-  Processing in the Operating System Kernel*, CoNEXT 2018 —
-  <https://dl.acm.org/doi/10.1145/3281411.3281443>
-- Linux kernel BPF documentation — <https://docs.kernel.org/bpf/>
-- eBPF documentation — <https://docs.ebpf.io/>
-- Cilium eBPF reference — <https://docs.cilium.io/en/stable/network/ebpf/intro/>
- 
 
+- Toke Høiland-Jørgensen, Jesper Dangaard Brouer, Daniel Borkmann, John Fastabend, Tom Herbert, David Ahern, and David Miller. 2018. The eXpress data path: fast programmable packet processing in the operating system kernel. In Proceedings of the 14th International Conference on Emerging Networking Experiments and Technologies (CoNEXT '18). Association for Computing Machinery, New York, NY, USA, 54–66. - <https://doi.org/10.1145/3281411.3281443>
+- The Linux Kernel Documentation (BPF Documentation) - <https://docs.kernel.org/bpf/>
+- The Linux Kernel Documentation (BPF Maps) - <https://docs.kernel.org/bpf/maps.html>
+- eBPF Documentation - <https://docs.ebpf.io/>
+- Cilium BPF and XDP Reference Guide - <https://docs.cilium.io/en/stable/network/ebpf/intro/>
+- libbpf API Documentation - <https://libbpf.readthedocs.io/>
+- Netfilter Project - nftables - <https://wiki.nftables.org/wiki-nftables/index.php/Main_Page>
