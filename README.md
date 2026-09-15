@@ -186,13 +186,11 @@ docs/                   the documents listed above
 - **IPv4 only.** IPv6 is passed unfiltered.
 - **No connection state.** An ACK flood is close to indistinguishable from the
   reverse direction of a legitimate download using per-source aggregates alone.
-  This is the documented blind spot — see ML_MODEL.md §7. The fix is SYN
-  cookies or connection tracking.
+  The fix is SYN cookies or connection tracking.
 - **`srcstate` can fill** under source spoofing, because a map holding a
-  `bpf_spin_lock` cannot be an `LRU_HASH`. The trade-off is explained in
-  ARCHITECTURE.md §3; a correct rate limiter with bounded capacity was chosen
-  over an incorrect one with unbounded capacity.
-- **Port spread is approximate** — a 64-bit hashed bitmap, so it under-counts.
+  `bpf_spin_lock` cannot be an `LRU_HASH`. A correct rate limiter with bounded
+  capacity was chosen over an incorrect one with unbounded capacity.
+- **Port spread is approximate** - a 64-bit hashed bitmap, so it under-counts.
 - **One-second resolution.** Bursts shorter than a window are averaged out.
 - **Benchmarks run on veth**, which supports native XDP but has no DMA or
   hardware queues. Relative comparisons between systems are valid; absolute
