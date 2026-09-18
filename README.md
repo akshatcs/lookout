@@ -52,7 +52,8 @@ control plane that adapts enforcement based on observed traffic behaviour.
 
 ```bash
 # Quick start - Get into the VM and copy the project.
-scp -P 2222 adaptive-xdp-firewall.tar.gz devuser@127.0.0.1:~/
+scp -P 2222 adaptive-xdp-firewall.tar.gz devuser@127.0.0.1:~/      # Upload local file to remote server
+scp -P 2222 devuser@127.0.0.1:~/adaptive-xdp-firewall-v1.tar.gz .  # Download remote file to local directory
 ssh devuser@127.0.0.1 -p 2222
 tar xzf adaptive-xdp-firewall.tar.gz && cd adaptive-xdp-firewall
 ./scripts/install_deps.sh && make && make model
