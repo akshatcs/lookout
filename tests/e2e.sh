@@ -34,9 +34,15 @@ hits()     { $FW block list | tr -d , | awk -v p="$1/32" '$1==p {print $3}'; }
 send()     { $NS hping3 -q "$@" 10.10.1.1 >/dev/null 2>&1; }
 clean()    { $FW reset --all >/dev/null; }
 level()    { $FW config | awk '/aggressiveness/ {print $2}'; }
-# tcpdump sees what the stack sees, i.e. only what XDP passed
-capture()  { tcpdump -ni veth-fw -c 1000 "$2" >"$TMP/$1" 2>/dev/null & cap=$!; sleep 1; }
-captured() { sleep 1; kill $cap; wait $cap 2>/dev/null; grep -c . "$TMP/$1"; }
+# tcpdump sees what the stack sees, i.e. only what XDP passed. Wait until it
+# says it is listening, so that on a busy machine it can't miss the packets.
+capture()  { tcpdump -ni veth-fw -c 1000 "$2" >"$TMP/$1" 2>"$TMP/$1.err" & cap=$!
+             for _ in $(seq 50); do grep -q listening "$TMP/$1.err" && break; sleep 0.1; done; }
+# (called inside $(...), where wait can't see tcpdump; poll until it has
+# exited and so has written out everything it captured)
+captured() { sleep 1; kill $cap
+             for _ in $(seq 30); do kill -0 $cap 2>/dev/null || break; sleep 0.1; done
+             grep -c . "$TMP/$1"; }
 eq()       { [[ "$1" == "$2" ]]; }
 ge()       { [[ "${1:-0}" -ge "$2" ]]; }
 between()  { [[ "${1:-0}" -ge "$2" && "${1:-0}" -le "$3" ]]; }
@@ -144,11 +150,9 @@ check "passed + dropped == received ($rx)" eq "$rx" "$sum"
 clean
 
 echo "spoofed source and subnets"
-tcpdump -ni veth-fw -c 100 'src host 8.8.8.8' >"$TMP/before" 2>/dev/null & tp=$!
-sleep 1; send -c 5 -i u100000 -S -p 80 -a 8.8.8.8; sleep 1; kill $tp; wait $tp 2>/dev/null
+capture before 'src host 8.8.8.8'; send -c 5 -i u100000 -S -p 80 -a 8.8.8.8; captured before >/dev/null
 $FW block add 8.8.8.8 >/dev/null
-tcpdump -ni veth-fw -c 100 'src host 8.8.8.8' >"$TMP/after" 2>/dev/null & tp=$!
-sleep 1; send -c 5 -i u100000 -S -p 80 -a 8.8.8.8; sleep 1; kill $tp; wait $tp 2>/dev/null
+capture after 'src host 8.8.8.8'; send -c 5 -i u100000 -S -p 80 -a 8.8.8.8; captured after >/dev/null
 check "tcpdump sees 5 SYNs before the block" eq "$(grep -c 'Flags \[S\]' "$TMP/before")" 5
 check "tcpdump sees nothing after it (dropped before the stack)" eq "$(grep -c 'Flags \[S\]' "$TMP/after")" 0
 check "block hit counter is 5" eq "$(hits 8.8.8.8)" 5
@@ -174,10 +178,11 @@ failed_before=$fail
 $FW allow add 10.10.1.9 >/dev/null
 $CTL >"$TMP/live" 2>&1 & ctl=$!
 sleep 2
-# Pace the floods (RATE us/packet, ~25k pps) rather than --flood, so seven
-# generators plus the controller all fit on a modest VM and the measured
-# rates stay well above the detection thresholds instead of flickering.
-gen() { RATE=40 ./bench/gen_traffic.sh "$1" 20 "$2" >/dev/null & }
+# The generators run at the lowest CPU priority so that, on a small VM, the
+# controller (which raises its own) still gets its turn every second. The
+# floods stay at full speed: pacing them with hping3 -i depends on the VM's
+# timer resolution, and on some VMs it sends far below the flood thresholds.
+gen() { nice -n 19 ./bench/gen_traffic.sh "$1" 20 "$2" >/dev/null & }
 gen syn_flood 10.10.1.3; gen low_slow_syn 10.10.1.4; gen udp_flood 10.10.1.5
 gen icmp_flood 10.10.1.6; gen port_scan 10.10.1.7
 # 10.10.1.9 is allowlisted and matches the SYN rule. It sends slowly on
