@@ -107,8 +107,6 @@ The policy is stateless, like iptables without conntrack: with
 `policy deny`, replies to connections this machine opens itself need rules
 too. That's fine for a server that only accepts connections.
 
-## Blocking an address someone names
-
 ```bash
 sudo ./scripts/block_ip.sh 8.8.8.8
 ```
@@ -129,7 +127,7 @@ network stack sees them. It works for prefixes too (`203.0.113.0/24`).
 `veth-cl` sends and `veth-fw` filters. Your SSH session uses a different
 interface and is never touched.
 
-## Layout
+## Project layout
 
 ```
 bpf/common.h              map layouts shared by kernel, loader and Python
