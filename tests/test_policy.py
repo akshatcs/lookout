@@ -99,12 +99,31 @@ class TestBlocker(unittest.TestCase):
         b.update({"x": "syn flood"})
         self.assertEqual(fw.blocks, {"x": 60})
 
-    def test_a_clean_window_resets_the_count(self):
+    def test_alternating_bursts_are_never_blocked(self):
         fw = FakeFirewall()
         b = Blocker(fw)
-        for verdict in ("syn flood", None, "syn flood"):
+        for verdict in ("syn flood", None) * 5:
             b.update({"x": verdict})
         self.assertEqual(fw.blocks, {})
+
+    def test_a_clean_window_takes_one_strike_away_not_all(self):
+        # a flood that dips below a threshold for one window keeps its
+        # history: flagged, flagged-but-dipped... is still caught
+        fw = FakeFirewall()
+        b = Blocker(fw)
+        b.STRIKES = 3
+        for verdict in ("f", "f", None, "f", "f"):
+            b.update({"x": verdict})
+        self.assertEqual(fw.blocks, {"x": 60})
+
+    def test_quiet_windows_do_not_count(self):
+        # a source that sent nothing is absent from the verdicts: no change
+        fw = FakeFirewall()
+        b = Blocker(fw)
+        b.update({"x": "f"})
+        b.update({})
+        b.update({"x": "f"})
+        self.assertEqual(fw.blocks, {"x": 60})
 
     def test_allowlisted_source_is_never_blocked(self):
         fw = FakeFirewall(allowed={"x"})

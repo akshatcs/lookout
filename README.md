@@ -55,9 +55,10 @@ running with the last rules and deadlines it wrote.
   - **Load tiers:** when the traffic reaching the rate limiter rises, it
     tightens everyone's per-source limit within a second, then relaxes one
     step per 5 calm seconds
-  - **Auto-blocking:** a source that matches a rule (port scan, flood,
-    unanswered SYNs, ICMP flood) for two seconds in a row is blocked for
-    60 s, then 300 s, then 900 s if it comes back
+  - **Auto-blocking:** each second a source matches a rule (port scan,
+    flood, unanswered SYNs, ICMP flood) earns it a strike, and each clean
+    second takes one away. At two strikes it is blocked for 60 s, then
+    300 s, then 900 s if it comes back
   - Guard rails: allowlisted hosts are never blocked, at most 32 new blocks
     a second, and a dry-run mode
 

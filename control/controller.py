@@ -170,6 +170,13 @@ def main(argv=None):
 
     if os.geteuid() != 0:
         sys.exit("error: needs root, re-run with sudo")
+    # Run ahead of ordinary processes. If heavy traffic (or, on the testbed,
+    # the traffic generators themselves) keeps the CPUs busy, the controller
+    # must still get its once-a-second turn to react to it.
+    try:
+        os.setpriority(os.PRIO_PROCESS, 0, -10)
+    except OSError:
+        pass
     try:
         Controller(args).run()
     except OSError as e:

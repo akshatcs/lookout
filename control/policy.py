@@ -59,8 +59,12 @@ class Aggressiveness:
 class Blocker:
     """Turns per-second verdicts into blocklist entries, with guard rails:
 
-    - a source must be flagged in STRIKES consecutive windows (one bad
-      second is often just a burst);
+    - a source must reach STRIKES strikes before it is blocked. A flagged
+      window adds one; a clean window takes one away (not resets to zero).
+      So a source has to be flagged in most recent windows, but a single
+      dip -- a flood briefly starved of CPU and measured below a threshold,
+      or one noisy reading -- does not undo its history. One isolated bad
+      window still never blocks, because it decays straight back to zero.
     - allowlisted sources are never blocked (the kernel enforces this too);
     - repeat offenders get longer blocks: 60 s, then 300 s, then 900 s;
     - at most MAX_PER_WINDOW new blocks per second, so a bad rule can't
@@ -75,7 +79,7 @@ class Blocker:
     def __init__(self, fw, dry_run=False):
         self.fw = fw
         self.dry_run = dry_run
-        self.strikes = {}       # ip -> consecutive flagged windows
+        self.strikes = {}       # ip -> strikes (flagged windows minus clean ones)
         self.offences = {}      # ip -> times blocked so far
         self.until = {}         # ip -> time.time() when our block ends
         self.blocks_issued = 0
@@ -94,7 +98,12 @@ class Blocker:
         issued = 0
         for ip, reason in verdicts.items():
             if reason is None:
-                self.strikes.pop(ip, None)
+                # decay towards zero rather than resetting, so one clean
+                # window doesn't wipe out a persistent offender's history
+                if self.strikes.get(ip, 0) > 1:
+                    self.strikes[ip] -= 1
+                else:
+                    self.strikes.pop(ip, None)
                 continue
             self.strikes[ip] = self.strikes.get(ip, 0) + 1
             if self.strikes[ip] < self.STRIKES:

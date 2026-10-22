@@ -15,6 +15,7 @@ between systems.
 
 import csv
 import os
+import re
 import statistics
 import sys
 from collections import defaultdict
@@ -81,11 +82,13 @@ def summary(data, env):
                        "(xdp minus the empty program)")
     if out[-1]:
         out.append("")
-    return "\n".join(out + ["checks", "------"] + checks(data))
+    return "\n".join(out + ["checks", "------"] + checks(data, env))
 
 
-def checks(data):
-    worst, noisy, busy = 0.0, [], []
+def checks(data, env=""):
+    worst, noisy, busy, unseen = 0.0, [], [], []
+    m = re.search(r"^cpus\s+(\d+)", env, re.M)
+    ncpu = int(m.group(1)) if m else 0
     for (wl, n), by_sys in data.items():
         for s, rows in by_sys.items():
             for r in rows if s != "xdp-empty" else ():     # no counters to check
@@ -100,7 +103,16 @@ def checks(data):
                 noisy.append(f"{s} {wl}/{n}")
             if med(rows, "cpu_busy_pct") > 90:
                 busy.append(f"{s} {wl}/{n}")
+            # each hping3 sender spins on a CPU of its own, so the busy share
+            # can't be below senders/cpus; if it is, the VM is not reporting
+            # CPU time properly and no CPU figure from this run means anything
+            if ncpu and med(rows, "cpu_busy_pct") < 80 * min(n, ncpu) / ncpu:
+                unseen.append(f"{s} {wl}/{n}")
     return [
+        "[ok] CPU time is being accounted (every sender shows as a busy CPU)" if not unseen else
+        f"[FAIL] CPU busy is lower than the senders alone must use: {', '.join(unseen)}. "
+        "This VM is not reporting CPU time reliably, so the CPU figures from this "
+        "run are not valid (the packet counts are). See docs/TROUBLESHOOTING.md.",
         f"[{'ok' if worst < 1 else 'CHECK'}] the kernel's IP counter agrees with the "
         f"firewalls' drop counters (worst difference {worst:.2f}% of packets)",
         "[ok] runs within 25% of each other" if not noisy else

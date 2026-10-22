@@ -236,14 +236,18 @@ if step 8 "The adaptive control plane"; then
         }
     fi
     sleep 2
-    say "Three clients for 20 s: 10.10.1.2 normal game-like traffic, 10.10.1.7 scans"
-    say "ports 1-1024, 10.10.1.3 floods. Nobody tells the firewall which is which."
+    say "Three clients: 10.10.1.2 normal game-like traffic, 10.10.1.7 scans ports"
+    say "1-1024, 10.10.1.3 floods. Nobody tells the firewall which is which."
     gens=()
     for g in "game 10.10.1.2" "port_scan 10.10.1.7" "syn_flood 10.10.1.3"; do
         set -- $g
-        ./bench/gen_traffic.sh "$1" 20 "$2" >/dev/null & gens+=($!)
+        ./bench/gen_traffic.sh "$1" 60 "$2" >/dev/null & gens+=($!)
     done
-    sleep 4
+    # usually 2-3 s; a slow VM can take longer, so wait up to 15 s
+    for _ in $(seq 15); do
+        sleep 1
+        [[ $($FW block list | grep -cE '10\.10\.1\.(3|7)/32') == 2 ]] && break
+    done
     run "$FW block list"
     peak=$($FW config | awk '/aggressiveness/ {print $2}')
     check "the scanner was blocked automatically" bash -c "$FW block list | grep -q 10.10.1.7/32"
@@ -253,11 +257,15 @@ if step 8 "The adaptive control plane"; then
     say "The tier went up within a second because load jumped. Now that the flooder is"
     say "blocked its packets no longer count as load, so the tier steps back down,"
     say "one level per 5 calm seconds, while the flood is still running."
-    sleep 12
-    later=$($FW config | awk '/aggressiveness/ {print $2}')
-    echo "  tier 12 s later: $later"
+    for i in $(seq 20); do
+        sleep 1
+        later=$($FW config | awk '/aggressiveness/ {print $2}')
+        [[ ${later#L} -lt ${peak#L} ]] && break
+    done
+    echo "  tier $i s later: $later"
     check "the tier relaxed again ($peak -> $later)" bash -c "[[ ${later#L} -lt ${peak#L} ]]"
-    wait "${gens[@]}" 2>/dev/null
+    pkill -f "hping3" 2>/dev/null       # stop the traffic early
+    wait "${gens[@]}" 2>/dev/null       # not a bare wait: the web server is a job too
     pause
 fi
 

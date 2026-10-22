@@ -96,7 +96,9 @@ $FW port allow tcp 22 >/dev/null; $FW port allow icmp 8 >/dev/null
 $FW policy deny >/dev/null
 check "default deny: ping allowed by the icmp/8 rule" eq "$(replies 10.10.1.2 3)" 3
 $FW reset >/dev/null
-send -c 4 -i u100000 -S -p 22
+# From an address that doesn't exist: if the VM runs sshd, it answers SYNs
+# from a real client, whose resets to port 22 would be counted here too.
+send -c 4 -i u100000 -S -p 22 -a 10.10.1.9
 send -c 4 -i u100000 -S -p 8080
 send -c 4 -i u100000 --udp -p 53
 check "default deny: tcp/22 passes by rule" eq "$(stat pass_rule)" 4
@@ -157,45 +159,74 @@ check "one /24 entry drops 8.8.8.44 but not 8.8.9.44" \
 clean
 
 echo "controller"
-timeout 9 python3 -m control.controller --dry-run >"$TMP/dry" 2>&1 &
+CTL="python3 -m control.controller"
+# If a controller check fails, its screen output is kept here for diagnosis
+LOG=results/e2e-controller.log
+keep_log() { mkdir -p results; sed 's/\x1b\[[0-9;]*[A-Za-z]//g' "$1" >"$LOG"
+             echo "  (controller output saved to $LOG)"; }
+timeout 9 $CTL --dry-run >"$TMP/dry" 2>&1 &
 sleep 2; $NS timeout 6 hping3 --flood -S -p 80 -a 10.10.1.3 10.10.1.1 >/dev/null 2>&1; wait
 check "dry run reports WOULD BLOCK" grep -q 'WOULD BLOCK 10.10.1.3' "$TMP/dry"
 check "dry run leaves the blocklist empty" bash -c "$FW block list | grep -q empty"
 clean
 
+failed_before=$fail
 $FW allow add 10.10.1.9 >/dev/null
-python3 -m control.controller >"$TMP/live" 2>&1 & ctl=$!
+$CTL >"$TMP/live" 2>&1 & ctl=$!
 sleep 2
-gen() { ./bench/gen_traffic.sh "$1" 8 "$2" >/dev/null & }
+# Pace the floods (RATE us/packet, ~25k pps) rather than --flood, so seven
+# generators plus the controller all fit on a modest VM and the measured
+# rates stay well above the detection thresholds instead of flickering.
+gen() { RATE=40 ./bench/gen_traffic.sh "$1" 20 "$2" >/dev/null & }
 gen syn_flood 10.10.1.3; gen low_slow_syn 10.10.1.4; gen udp_flood 10.10.1.5
 gen icmp_flood 10.10.1.6; gen port_scan 10.10.1.7
-gen game 10.10.1.2; gen syn_flood 10.10.1.9
-sleep 7
+# 10.10.1.9 is allowlisted and matches the SYN rule. It sends slowly on
+# purpose: the allowlist passes everything up the stack, and a full flood
+# there would only test how fast this machine's kernel is.
+gen game 10.10.1.2; gen low_slow_syn 10.10.1.9
+# Wait until all five are blocked, for at most 18 s (a fast machine needs 3)
+t0=$SECONDS; declare -A took=(); lvl=L0
+for _ in $(seq 36); do
+    sleep 0.5
+    bl=$($FW block list)
+    l=$(level); [[ ${l#L} -gt ${lvl#L} ]] && lvl=$l      # highest tier seen
+    for ip in 3 4 5 6 7; do
+        [[ -z ${took[$ip]:-} ]] && grep -q "10.10.1.$ip/32" <<<"$bl" && took[$ip]=$((SECONDS - t0))
+    done
+    [[ ${#took[@]} == 5 ]] && break
+done
 blocked=$($FW block list)
-lvl=$(level)
-kill -INT $ctl; wait $ctl 2>/dev/null; wait
+kill -INT $ctl; wait $ctl 2>/dev/null
+pkill -f "hping3" 2>/dev/null; wait
 for ip in 3 4 5 6 7; do
-    check "attack from 10.10.1.$ip auto-blocked" grep -q "10.10.1.$ip/32" <<<"$blocked"
+    check "attack from 10.10.1.$ip auto-blocked (within ${took[$ip]:-18+} s)" \
+        grep -q "10.10.1.$ip/32" <<<"$blocked"
 done
 check "normal game traffic from 10.10.1.2 not blocked" bash -c "! grep -q 10.10.1.2/32 <<<'$blocked'"
-check "allowlisted flooder 10.10.1.9 not blocked" bash -c "! grep -q 10.10.1.9/32 <<<'$blocked'"
-check "rate tier escalated under load (now $lvl)" bash -c "[[ $lvl != L0 ]]"
+check "allowlisted 10.10.1.9 not blocked though it matches a rule" bash -c "! grep -q 10.10.1.9/32 <<<'$blocked'"
+check "rate tier escalated under load (reached $lvl)" bash -c "[[ $lvl != L0 ]]"
 # Put the loose rate limit back and let the bucket refill, so that only the
 # blocklist entry can be what drops these pings.
 $FW config set --rate 20000 --burst 40000 >/dev/null; sleep 1.5
 check "blocks still enforced after the controller exits" eq "$(replies 10.10.1.3 3)" 0
+[[ $fail -gt $failed_before ]] && keep_log "$TMP/live"
 $FW allow del 10.10.1.9 >/dev/null
 clean
 
 echo "adaptation both ways"
-python3 -m control.controller >"$TMP/live2" 2>&1 & ctl=$!
+failed_before=$fail
+$CTL >"$TMP/live2" 2>&1 & ctl=$!
 sleep 2
-./bench/gen_traffic.sh syn_flood 16 10.10.1.3 >/dev/null &
-sleep 3; peak=$(level)
-sleep 11; later=$(level)
-kill -INT $ctl; wait $ctl 2>/dev/null; wait
+./bench/gen_traffic.sh syn_flood 40 10.10.1.3 >/dev/null &
+for _ in $(seq 10); do sleep 1; $FW block list | grep -q 10.10.1.3/32 && break; done
+peak=$(level)
+# relaxing takes 5 calm seconds per tier; give it up to 20 s
+for _ in $(seq 20); do sleep 1; later=$(level); [[ ${later#L} -lt ${peak#L} ]] && break; done
+kill -INT $ctl; wait $ctl 2>/dev/null
+pkill -f "hping3" 2>/dev/null; wait
 check "flood blocked and tier raised ($peak)" bash -c "[[ $peak != L0 ]] && $FW block list | grep -q 10.10.1.3/32"
 check "tier relaxed while the blocked flood went on ($peak -> $later)" bash -c "[[ ${later#L} -lt ${peak#L} ]]"
+[[ $fail -gt $failed_before ]] && keep_log "$TMP/live2"
 clean
 
 echo

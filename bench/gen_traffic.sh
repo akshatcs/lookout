@@ -8,6 +8,11 @@
 #              udp_flood, icmp_flood, port_scan
 #
 # source-ip forges the source address (hping3 -a), e.g. 10.10.1.3.
+#
+# RATE=<us> paces the three flood classes at one packet every <us>
+# microseconds instead of hping3's --flood (as fast as possible). The tests
+# use this so the generators don't peg a whole CPU each and starve the
+# controller; the demo and benchmark leave it unset for maximum rate.
 set -uo pipefail
 
 NS=${NS:-fwtest}
@@ -22,15 +27,19 @@ SRC=${3:-}
 spoof=()
 [[ -n $SRC ]] && spoof=(-a "$SRC")
 
+# --flood by default; a paced interval when RATE is set
+fast=(--flood)
+[[ -n ${RATE:-} ]] && fast=(-i "u$RATE")
+
 run() { ip netns exec "$NS" timeout "$SECS" "$@" >/dev/null 2>&1; }
 
 echo "sending $CLASS to $TARGET for ${SECS}s ${SRC:+from $SRC}"
 case $CLASS in
     game)         run hping3 --udp -p 27015 -d 80 -i u16666 "${spoof[@]}" "$TARGET" ;;
-    syn_flood)    run hping3 --flood -S -p 80 "${spoof[@]}" "$TARGET" ;;
+    syn_flood)    run hping3 "${fast[@]}" -S -p 80 "${spoof[@]}" "$TARGET" ;;
     low_slow_syn) run hping3 -S -p 80 -i u5000 "${spoof[@]}" "$TARGET" ;;
-    udp_flood)    run hping3 --flood --udp -p 53 -d 100 "${spoof[@]}" "$TARGET" ;;
-    icmp_flood)   run hping3 --flood --icmp "${spoof[@]}" "$TARGET" ;;
+    udp_flood)    run hping3 "${fast[@]}" --udp -p 53 -d 100 "${spoof[@]}" "$TARGET" ;;
+    icmp_flood)   run hping3 "${fast[@]}" --icmp "${spoof[@]}" "$TARGET" ;;
     port_scan)    run hping3 -S --scan 1-1024 -i u2000 "${spoof[@]}" "$TARGET" ;;
     *) echo "unknown class: $CLASS" >&2; sed -n '2,10p' "$0"; exit 1 ;;
 esac
