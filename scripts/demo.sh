@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Guided demo. Every step runs real commands against the loaded firewall,
-# shows them, checks the outcome and pauses. docs/DEMO.md explains each step.
+# shows them, checks the outcome and pauses.
 #
 #   sudo ./scripts/demo.sh             press Enter to advance
 #   sudo ./scripts/demo.sh 4           start at step 4
@@ -80,7 +80,7 @@ fi
 $FW reset --all >/dev/null
 pkill -f "python3 -m control[.]controller" 2>/dev/null
 # a small web server on the firewall host, so there is a real service to protect
-python3 -m http.server 8080 --bind 10.10.1.1 --directory docs >/dev/null 2>&1 &
+python3 -m http.server 8080 --bind 10.10.1.1 >/dev/null 2>&1 &
 web=$!
 sleep 1
 pause

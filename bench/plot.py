@@ -112,7 +112,9 @@ def checks(data, env=""):
         "[ok] CPU time is being accounted (every sender shows as a busy CPU)" if not unseen else
         f"[FAIL] CPU busy is lower than the senders alone must use: {', '.join(unseen)}. "
         "This VM is not reporting CPU time reliably, so the CPU figures from this "
-        "run are not valid (the packet counts are). See docs/TROUBLESHOOTING.md.",
+        "run are not valid (the packet counts are). On VirtualBox under Windows the "
+        "usual cause is Hyper-V running underneath it (a green turtle icon in the "
+        "VM window); measure on a machine without that layer.",
         f"[{'ok' if worst < 1 else 'CHECK'}] the kernel's IP counter agrees with the "
         f"firewalls' drop counters (worst difference {worst:.2f}% of packets)",
         "[ok] runs within 25% of each other" if not noisy else
@@ -194,3 +196,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

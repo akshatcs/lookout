@@ -74,7 +74,7 @@ unzip adaptive-xdp-firewall.zip && cd adaptive-xdp-firewall
 make
 make test                            # unit tests, no root
 sudo make e2e                        # builds the testbed, loads, checks multiple behaviours
-sudo ./scripts/demo.sh               # the guided demo (docs/DEMO.md)
+sudo ./scripts/demo.sh               # the guided demo
 
 sudo ./scripts/block_ip.sh 8.8.8.8     # if asked to block an address
 sudo ./bench/setup_netns.sh && sudo ./bench/run_experiment.sh   # runs for ~20 min
@@ -150,7 +150,6 @@ bench/nftables_baseline.sh  the same policy in nftables, for comparison
 bench/run_experiment.sh   benchmark: none vs nftables vs XDP
 bench/nic_path.bpf.c      delivers benchmark traffic like a network card
 bench/plot.py             summary, consistency checks and the CPU chart
-docs/                     BUILD, DEMO, TROUBLESHOOTING
 ```
 
 ## Common commands
@@ -187,7 +186,7 @@ cd ~/adaptive-xdp-firewall
 sudo ./bench/setup_netns.sh                       # test network: clients 10.10.1.2/.3/.4 -> firewall 10.10.1.1
 sudo ./bin/fwload -i veth-fw                       # load the XDP firewall
 sudo python3 -m control.fwctl reset --all          # start with no rules
-sudo python3 -m http.server 8080 --bind 10.10.1.1 --directory docs >/dev/null 2>&1 &   # a web server to protect
+sudo python3 -m http.server 8080 --bind 10.10.1.1 >/dev/null 2>&1 &   # a web server to protect
 ```
 
 Paste these two helpers. `t SRC PORT` connects from a client address to a port on the firewall host. `p SRC` pings from a client.
@@ -331,3 +330,4 @@ kill %1                                   # stops the web server
 - Cilium BPF and XDP Reference Guide <https://docs.cilium.io/en/stable/network/ebpf/intro/>
 - libbpf API Documentation <https://libbpf.readthedocs.io/>
 - nftables wiki <https://wiki.nftables.org/>
+
