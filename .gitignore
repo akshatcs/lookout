@@ -1,0 +1,6 @@
+# bin/
+*.o
+__pycache__/
+results/*
+!results/.gitkeep
+*.obj
