@@ -13,7 +13,7 @@
     sudo python3 -m control.fwctl reset [--blocks | --all]
     sudo python3 -m control.fwctl selftest
 
-It works on the same pinned maps as the controller, so both can run at once.
+It works on the same pinned maps as the controller, so both can run at once. The maps stay active throughout the lifetime of the kernel module, so it's safe.
 """
 
 import argparse

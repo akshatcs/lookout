@@ -5,7 +5,8 @@
  * The program keeps running after this exits: the network device holds a
  * reference to the attached program and bpffs holds the pinned maps. That
  * is what lets the Python tools open the maps later by path, and why
- * stopping the controller doesn't stop the firewall.
+ * stopping the controller doesn't stop the firewall. The python program runs
+ * in user space and can be stopped and restarted without affecting the kernel program.
  *
  *   sudo ./bin/fwload -i veth-fw          load and attach
  *   sudo ./bin/fwload -i veth-fw -u       detach and remove the pins
