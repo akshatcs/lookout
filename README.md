@@ -27,7 +27,7 @@ it sees.
         +-------------------------------------------------------+
 ```
 
-**The kernel enforces and userspace decides.** They only share maps, so
+**The kernel enforces and userspace decides.** They only share maps (ebpf maps), so
 userspace is never on the packet path, and stopping it leaves the firewall
 running with the last rules and deadlines it wrote.
 
@@ -76,11 +76,6 @@ make test                            # unit tests, no root
 sudo make e2e                        # builds the testbed, loads, checks multiple behaviours
 sudo ./scripts/demo.sh               # the guided demo
 
-sudo ./scripts/block_ip.sh 8.8.8.8     # if asked to block an address
-sudo ./bench/setup_netns.sh && sudo ./bench/run_experiment.sh   # runs for ~20 min
-python3 bench/plot.py results/run-*
-sudo ./bench/collateral.sh && sudo ./bench/detection.sh            # the evaluation, ~2 h
-python3 bench/eval_report.py results/collateral-*                  # and results/detection-*
 ```
 
 
@@ -110,7 +105,7 @@ The policy is stateless, like iptables without conntrack: with
 too. That's fine for a server that only accepts connections.
 
 ```bash
-sudo ./scripts/block_ip.sh 8.8.8.8
+sudo ./scripts/block_ip.sh 10.10.1.3
 ```
 
 The testbed is a closed network, so the script sends five packets with that
@@ -317,6 +312,50 @@ sudo ./bin/fwload -i veth-fw -u                  # unload the firewall (optional
 You can't send real internet traffic into this closed test network, so to block an address (say 8.8.8.8), use `sudo ./scripts/block_ip.sh 8.8.8.8`. It sends packets with that source address, then shows tcpdump seeing 5 before the block and 0 after.
 
 Also, we use token bucket for rate limiting. We have defaults, with the burst set to two seconds' worth of the rate, which is a common rule of thumb. We can change them with `sudo python3 -m control.fwctl config set --rate 1000 --burst 2000`. The adaptive controller changes both together. As load rises it tightens each source's limit through four levels: 20,000/40,000, then 5,000/10,000, then 1,000/2,000, then 200/400. The burst stays at twice the rate at every level.
+
+## Benchmarking
+
+```bash
+cd ~/project/adaptive-xdp-firewall
+make                                   # build if you haven't
+sudo ./bench/setup_netns.sh            # the test network
+```
+
+Performance benchmark: CPU per packet
+```bash
+sudo ./bench/run_experiment.sh
+python3 bench/plot.py results/run-*
+```
+
+On a VM with 2 vCPUs, run sudo ./bench/run_experiment.sh --senders 1 instead, so the senders don’t saturate both CPUs.
+
+A normal user experience
+```bash
+sudo ./bench/collateral.sh
+python3 bench/eval_report.py results/collateral-*
+```
+
+Detection accuracy
+```bash
+sudo ./bench/detection.sh
+python3 bench/eval_report.py results/detection-*
+```
+
+Each run creates its own folder under results. If you’ve run a benchmark more than once, results/run-* matches several folders. Give the exact folder name instead, for example python3 bench/plot.py results/run-20261026-153500.
+
+Note: If your VM runs VirtualBox on top of Hyper-V, which breaks CPU-time accounting. Here's what it means for the benchmarks:
+
+Benchmark 1: plot.py checks for the problem. If it reports [FAIL] CPU busy is lower than the senders alone must use, the CPU figures from that run aren’t valid. The packet counts still are. Benchmarks 2 and 3: they rely on accurate timing and CPU figures. On your VM, rates and timings will come out lower or slower than on a normal machine, as the one end-to-end check showed.
+
+The results in a test virtual environments are kept in lookout-results.zip file. To regenerate their summaries and charts on the VM, run:
+
+```bash
+unzip lookout-results.zip
+python3 bench/plot.py        lookout-results/benchmark
+python3 bench/eval_report.py lookout-results/collateral
+python3 bench/eval_report.py lookout-results/detection
+```
+
 
 ## Clean up
 
