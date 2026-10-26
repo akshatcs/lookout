@@ -185,121 +185,134 @@ bench/eval_report.py      summaries and the latency chart for the evaluation
 
 ## Demo walkthrough
 
-A quick walkthrough via a terminal on the VM.
+A quick walkthrough via a terminal.
 
-## Setup
+## 0. Set up (once, before the demo)
 
 ```bash
 cd ~/adaptive-xdp-firewall
-sudo ./bench/setup_netns.sh                       # test network: clients 10.10.1.2/.3/.4 -> firewall 10.10.1.1
-sudo ./bin/fwload -i veth-fw                       # load the XDP firewall
-sudo python3 -m control.fwctl reset --all          # start with no rules
-sudo python3 -m http.server 8080 --bind 10.10.1.1 >/dev/null 2>&1 &   # a web server to protect
+sudo ./bench/setup_netns.sh                     # test network: clients 10.10.1.2–.4 -> firewall host 10.10.1.1
+sudo ./bin/fwload -i veth-fw                    # load the XDP firewall
+sudo python3 -m control.fwctl reset --all       # start with no rules
+python3 -m http.server 8080 --bind 10.10.1.1 >/dev/null 2>&1 &   # a small web server to protect
 ```
 
-Paste these two helpers. `t SRC PORT` connects from a client address to a port on the firewall host. `p SRC` pings from a client.
-
-```bash
-t() { local c; c=$(sudo ip netns exec fwtest curl -s -m 2 -o /dev/null -w '%{http_code}' --interface $1 http://10.10.1.1:$2/)
-      case $? in 0) echo "HTTP $c";; 7) echo "refused";; 28) echo "no answer (dropped)";; *) echo "error";; esac; }
-p() { sudo ip netns exec fwtest ping -c 2 -W 1 -I $1 10.10.1.1 | grep -o "[0-9]* received"; }
-FW="sudo python3 -m control.fwctl"
-```
-
-There are three possible answers:
-
-| Answer | Meaning |
-|---|---|
-| `HTTP 200` | Allowed, and the web server replied. |
-| `refused` | The packet got through the firewall, but nothing is listening on that port. |
-| `no answer (dropped)` | The firewall dropped the packet. |
-
-## 1. Before any rules
+Two shortcuts make the demo commands easy to read (paste them once):
 
 ```bash
-t 10.10.1.2 8080      # HTTP 200
-t 10.10.1.3 8080      # HTTP 200
-t 10.10.1.2 23        # refused   (port 23 reachable, just nothing listening)
-p 10.10.1.3           # 2 received
+p()   { sudo ip netns exec fwtest ping -c 3 -W 1 -I "$1" 10.10.1.1 | grep -E "received|100% packet loss"; }
+web() { sudo ip netns exec fwtest curl -s -m 2 -o /dev/null -w "HTTP %{http_code}\n" --interface "$1" http://10.10.1.1:"$2"/ || echo "no answer"; }
 ```
 
-## 2. Block an IP
+- `p ADDR` pings the firewall host from that client address.
+- `web ADDR PORT` fetches the web page from that client address. You'll see `HTTP 200` if it works, and `HTTP 000` or `no answer` if it's blocked.
+
+## Part A: Block an IP address
+
+**1. Before:** both clients can reach the host.
+```bash
+p 10.10.1.3          # 3 received
+p 10.10.1.2          # 3 received
+```
+
+**2. Block one address:**
+```bash
+sudo python3 -m control.fwctl block add 10.10.1.3        # blocked for 60 s by default
+```
+
+**3. After:** only that address is cut off.
+```bash
+p 10.10.1.3          # 0 received (100% packet loss)
+p 10.10.1.2          # 3 received: other clients are unaffected
+```
+
+**4. Show the firewall counted it:**
+```bash
+sudo python3 -m control.fwctl block list                 # shows the entry, time left, and packets dropped
+```
+
+**5. Unblock:**
+```bash
+sudo python3 -m control.fwctl block del 10.10.1.3
+p 10.10.1.3          # 3 received again
+```
+
+Optional variations:
+```bash
+sudo python3 -m control.fwctl block add 10.10.1.3 --duration 10   # lifts by itself after 10 s
+sudo python3 -m control.fwctl block add 10.10.1.0/24 --duration 0 # a whole subnet, until removed
+```
+
+The block is a kernel map entry. The XDP program checks it for every packet in the network driver, and drops matching packets before Linux builds anything for them. The expiry is checked by the kernel too, so the block lifts on time even if no userspace program is running.
+
+### Proof that blocked packets never reach the stack
+
+This one command shows it with tcpdump as a witness:
+```bash
+sudo ./scripts/block_ip.sh 8.8.8.8
+```
+It sends 5 packets with that source address, blocks it, and sends 5 more. tcpdump on the protected interface sees **5, then 0**: the packets are dropped before the network stack sees them. Remove it afterwards with `sudo python3 -m control.fwctl block del 8.8.8.8/32`.
+
+## Part B: Block a port
+
+**1. Before:** the web server on port 8080 answers.
+```bash
+web 10.10.1.2 8080   # HTTP 200
+```
+
+**2. Deny the port:**
+```bash
+sudo python3 -m control.fwctl port deny tcp 8080
+```
+
+**3. After:** nothing reaches the web server, from any client.
+```bash
+web 10.10.1.2 8080   # HTTP 000 / no answer
+p 10.10.1.2          # ping still works: only that port is blocked
+```
+
+**4. Show the rule and its hit counter:**
+```bash
+sudo python3 -m control.fwctl port                       # lists rules with how many packets each one dropped
+```
+
+**5. Remove the rule:**
+```bash
+sudo python3 -m control.fwctl port del tcp 8080
+web 10.10.1.2 8080   # HTTP 200 again
+```
+
+### Optional: allow-only mode (default deny)
+
+This turns it into a "deny everything except what I allow" firewall:
+```bash
+sudo python3 -m control.fwctl port allow tcp 8080        # allow the web server
+sudo python3 -m control.fwctl port allow icmp 8          # allow ping
+sudo python3 -m control.fwctl policy deny                # drop everything else
+
+web 10.10.1.2 8080   # HTTP 200: allowed by rule
+p 10.10.1.2          # 3 received: allowed by rule
+sudo python3 -m control.fwctl port                       # rules, plus "anything else: deny"
+
+sudo python3 -m control.fwctl policy allow               # back to normal
+```
+
+## Overall status
 
 ```bash
-$FW block add 10.10.1.3 --duration 60    # blocked 10.10.1.3/32 for 60s
-t 10.10.1.3 8080      # no answer (dropped)
-p 10.10.1.3           # 0 received
-t 10.10.1.2 8080      # HTTP 200   <- other clients unaffected
-$FW block list
+sudo python3 -m control.fwctl status    # settings, rules, lists and every counter
 ```
-```
-prefix                 remaining          hits  reason
-10.10.1.3/32                 56s             4  manual
-```
-`hits` counts the packets XDP dropped for that entry. To unblock:
-```bash
-$FW block del 10.10.1.3                  # unblocked 10.10.1.3
-t 10.10.1.3 8080      # HTTP 200
-```
-Use `--duration 0` for a permanent block. If you leave the block in place, it lifts by itself when the time runs out.
 
-## 3. Block a whole range, but allow one IP
+## Clean up after the demo
 
 ```bash
-$FW block add 10.10.1.0/24 --duration 60
-t 10.10.1.2 8080      # no answer (dropped)
-$FW allow add 10.10.1.2                  # allowed 10.10.1.2/32
-t 10.10.1.2 8080      # HTTP 200   <- allowlist wins over the block
-t 10.10.1.4 8080      # no answer (dropped)   <- rest of the /24 still blocked
-$FW block add 10.10.1.2
-# refused 10.10.1.2: it is allowlisted. Remove it from the allowlist first.
-```
-Undo with `$FW allow del 10.10.1.2` and `$FW block del 10.10.1.0/24`.
-
-## 4. Block a port
-
-```bash
-$FW port deny tcp 8080                    # deny tcp/8080
-t 10.10.1.2 8080      # no answer (dropped)
-t 10.10.1.2 23        # refused   <- other ports unaffected
-$FW port
-```
-```
-rule          action            hits
-tcp/8080      deny                 2
-anything else allow     (default policy)
-```
-```bash
-$FW port del tcp 8080                     # removed tcp/8080
-t 10.10.1.2 8080      # HTTP 200
+kill %1 2>/dev/null                              # stop the web server
+sudo python3 -m control.fwctl reset --all        # remove all rules
+sudo ./bin/fwload -i veth-fw -u                  # unload the firewall (optional)
 ```
 
-## 5. Allow only certain ports, drop everything else
-
-```bash
-$FW port allow tcp 8080
-$FW port allow icmp 8                     # ping (ICMP type 8)
-$FW policy deny                           # default: drop anything without an allow rule
-t 10.10.1.2 8080      # HTTP 200
-t 10.10.1.2 22        # no answer (dropped)
-t 10.10.1.2 23        # no answer (dropped)
-p 10.10.1.2           # 2 received
-$FW port
-```
-```
-rule          action            hits
-icmp/8        allow                2
-tcp/8080      allow                6
-anything else deny      (default policy)
-```
-Undo with `$FW policy allow` and `$FW port flush`.
-
-## Seeing why packets were dropped
-
-```bash
-$FW stats | grep -E "pass_|drop_"
-```
-This shows a counter per reason: `drop_blocklist` (blocked IP), `drop_port_rule` (deny rule), `drop_default` (default-deny policy), `pass_allowlist`, `pass_rule`, and so on. For independent proof that a packet never reached the network stack, watch the interface with `sudo tcpdump -ni veth-fw port 8080` while you test: dropped packets don't appear.
+- If a `p` or `web` result creates an issue, run `sudo python3 -m control.fwctl reset --all` and start that part again.
+- For the full guided demo, including the adaptive controller, use `sudo ./scripts/demo.sh`. It pauses at each step and checks each result.
 
 You can't send real internet traffic into this closed test network, so to block an address (say 8.8.8.8), use `sudo ./scripts/block_ip.sh 8.8.8.8`. It sends packets with that source address, then shows tcpdump seeing 5 before the block and 0 after.
 
