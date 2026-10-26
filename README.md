@@ -75,7 +75,6 @@ make
 make test                            # unit tests, no root
 sudo make e2e                        # builds the testbed, loads, checks multiple behaviours
 sudo ./scripts/demo.sh               # the guided demo
-
 ```
 
 
@@ -309,7 +308,7 @@ sudo ./bin/fwload -i veth-fw -u                  # unload the firewall (optional
 - If a `p` or `web` result creates an issue, run `sudo python3 -m control.fwctl reset --all` and start that part again.
 - For the full guided demo, including the adaptive controller, use `sudo ./scripts/demo.sh`. It pauses at each step and checks each result.
 
-You can't send real internet traffic into this closed test network, so to block an address (say 8.8.8.8), use `sudo ./scripts/block_ip.sh 8.8.8.8`. It sends packets with that source address, then shows tcpdump seeing 5 before the block and 0 after.
+You can't send real internet traffic into this closed test network, so to block an address, use `sudo ./scripts/block_ip.sh <ip address>`. It sends packets with that source address, then shows tcpdump seeing 5 before the block and 0 after.
 
 Also, we use token bucket for rate limiting. We have defaults, with the burst set to two seconds' worth of the rate, which is a common rule of thumb. We can change them with `sudo python3 -m control.fwctl config set --rate 1000 --burst 2000`. The adaptive controller changes both together. As load rises it tightens each source's limit through four levels: 20,000/40,000, then 5,000/10,000, then 1,000/2,000, then 200/400. The burst stays at twice the rate at every level.
 
@@ -345,7 +344,7 @@ Each run creates its own folder under results. If you’ve run a benchmark more 
 
 Note: If your VM runs VirtualBox on top of Hyper-V, which breaks CPU-time accounting. Here's what it means for the benchmarks:
 
-Benchmark 1: plot.py checks for the problem. If it reports [FAIL] CPU busy is lower than the senders alone must use, the CPU figures from that run aren’t valid. The packet counts still are. Benchmarks 2 and 3: they rely on accurate timing and CPU figures. On your VM, rates and timings will come out lower or slower than on a normal machine, as the one end-to-end check showed.
+Benchmark 1: plot.py checks for the problem. If it reports CPU busy is lower than the senders alone must use, the CPU figures from that run aren’t valid. The packet counts still are. Benchmarks 2 and 3: they rely on accurate timing and CPU figures. On a VM, rates and timings will come out lower or slower than on a normal machine because the virtual machine manager might context switch the virtual machine on the host operating system.
 
 The results in a test virtual environments are kept in lookout-results.zip file. To regenerate their summaries and charts on the VM, run:
 
@@ -390,4 +389,7 @@ kill %1                                   # stops the web server
 - Cilium BPF and XDP Reference Guide <https://docs.cilium.io/en/stable/network/ebpf/intro/>
 - libbpf API Documentation <https://libbpf.readthedocs.io/>
 - nftables wiki <https://wiki.nftables.org/>
+- Securing Linux with a faster and scalable iptables <https://dl.acm.org/doi/10.1145/3371927.3371929>
+- Performance Implications of Packet Filtering with Linux eBPF <https://ieeexplore.ieee.org/document/8493077>
+- Fast Packet Processing with eBPF and XDP: Concepts, Code, Challenges, and Applications <https://dl.acm.org/doi/10.1145/3371038>
 
