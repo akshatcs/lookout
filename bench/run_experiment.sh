@@ -26,10 +26,10 @@
 #                frame and running any XDP program at all (a baseline, not
 #                a firewall)
 #
-# NIC-like delivery: the senders transmit on a separate veth pair (gen0/gen1)
-# in the client namespace, and a one-line XDP program on gen1 redirects each
-# frame into veth-cl. veth-fw then receives raw frames with no sk_buff, the
-# way a network card's driver does (see bench/nic_path.bpf.c for why).
+# NIC-like delivery (bench/nic_path.sh): the senders transmit on a separate
+# veth pair (gen0/gen1) in the client namespace, and a one-line XDP program on
+# gen1 redirects each frame into veth-cl. veth-fw then receives raw frames
+# with no sk_buff, the way a network card's driver does.
 #
 # Per run, as differences across the traffic window:
 #   offered     packets sent on gen0
@@ -77,28 +77,14 @@ cleanup() {
     ./bin/fwload -i $IFACE -u >/dev/null 2>&1
     ip link set dev $IFACE xdpdrv off 2>/dev/null
     $NFT remove >/dev/null 2>&1
-    $NS ip link del gen0 2>/dev/null
-    ethtool -K $IFACE gro off 2>/dev/null
+    ./bench/nic_path.sh down
     rm -rf "$BUILD"
 }
 trap cleanup EXIT
 
-# The NIC-like path. veth-fw needs GRO on to receive XDP frames when no XDP
-# program is attached; with one attached the kernel turns it on anyway.
-CFLAGS="-O2 -g -Wall -target bpf -I/usr/include/$(uname -m)-linux-gnu"
-clang $CFLAGS -DTARGET_IFINDEX=$($NS cat /sys/class/net/veth-cl/ifindex) \
-    -c bench/nic_path.bpf.c -o "$BUILD/redirect.o" &&
-clang $CFLAGS -c bench/nic_path.bpf.c -o "$BUILD/empty.o" || exit 1
-$NS ip link del gen0 2>/dev/null
-Q=$(nproc)
-$NS ip link add gen0 numtxqueues $Q numrxqueues $Q type veth peer name gen1 numtxqueues $Q numrxqueues $Q
-for f in gro gso tso sg; do $NS ethtool -K gen0 $f off; $NS ethtool -K gen1 $f off; done >/dev/null 2>&1
-$NS ip link set gen0 up && $NS ip link set gen1 up
-$NS ip addr add 10.10.2.1/24 dev gen0
-$NS ip route add $TARGET/32 dev gen0 src 10.10.2.1
-$NS ip neigh replace $TARGET lladdr "$(cat /sys/class/net/$IFACE/address)" dev gen0 nud permanent
-$NS ip link set dev gen1 xdpdrv obj "$BUILD/redirect.o" sec xdp || exit 1
-ethtool -K $IFACE gro on >/dev/null
+./bench/nic_path.sh up || exit 1
+clang -O2 -g -Wall -target bpf -I/usr/include/$(uname -m)-linux-gnu \
+    -c bench/nic_path.bpf.c -o "$BUILD/empty.o" || exit 1
 
 OUT=${OUT:-results/run-$(date +%Y%m%d-%H%M%S)}
 mkdir -p "$OUT"

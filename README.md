@@ -79,6 +79,8 @@ sudo ./scripts/demo.sh               # the guided demo
 sudo ./scripts/block_ip.sh 8.8.8.8     # if asked to block an address
 sudo ./bench/setup_netns.sh && sudo ./bench/run_experiment.sh   # runs for ~20 min
 python3 bench/plot.py results/run-*
+sudo ./bench/collateral.sh && sudo ./bench/detection.sh            # the evaluation, ~2 h
+python3 bench/eval_report.py results/collateral-*                  # and results/detection-*
 ```
 
 
@@ -148,8 +150,13 @@ bench/setup_netns.sh      the veth testbed
 bench/gen_traffic.sh      normal and misbehaving traffic
 bench/nftables_baseline.sh  the same policy in nftables, for comparison
 bench/run_experiment.sh   benchmark: none vs nftables vs XDP
-bench/nic_path.bpf.c      delivers benchmark traffic like a network card
+bench/nic_path.sh         delivers traffic like a network card, from one or many sources
+bench/nic_path.bpf.c      the XDP program behind it
 bench/plot.py             summary, consistency checks and the CPU chart
+bench/collateral.sh       evaluation: a normal user's experience during attacks
+bench/detection.sh        evaluation: attacks caught, normal clients wrongly blocked
+bench/clients.py          realistic clients and servers for the evaluation
+bench/eval_report.py      summaries and the latency chart for the evaluation
 ```
 
 ## Common commands
@@ -166,6 +173,7 @@ bench/plot.py             summary, consistency checks and the CPU chart
 | Clean slate | `sudo python3 -m control.fwctl reset --all` |
 | Controller, watch only | `sudo python3 -m control.controller --dry-run` |
 | Benchmark | `sudo ./bench/run_experiment.sh` then `python3 bench/plot.py results/run-*` |
+| Evaluation | `sudo ./bench/collateral.sh`, `sudo ./bench/detection.sh`, then `python3 bench/eval_report.py results/<dir>` |
 
 ## Requirements
 

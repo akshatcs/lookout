@@ -1,8 +1,9 @@
 """Minimal access to pinned BPF maps and programs through the bpf(2) syscall.
 
 Every operation we need (open a pinned object, lookup, update, delete, walk
-the keys, read a program's info) is a single syscall, so calling it through ctypes avoids depending on
-BCC or on whichever libbpf version the distro ships. Needs root.
+the keys, read many entries at once, read a program's info) is a single
+syscall, so calling it through ctypes avoids depending on BCC or on whichever
+libbpf version the distro ships. Needs root.
 
 Keys and values are raw bytes here; firewall.py knows the layouts.
 """
@@ -22,6 +23,8 @@ NR_BPF = {
 MAP_LOOKUP_ELEM, MAP_UPDATE_ELEM, MAP_DELETE_ELEM, MAP_GET_NEXT_KEY = 1, 2, 3, 4
 OBJ_GET = 7
 OBJ_GET_INFO_BY_FD = 15
+MAP_LOOKUP_BATCH = 24
+ENOTSUPP = 524      # kernel-internal errno some map types return for batch ops
 
 BPF_ANY = 0
 BPF_F_LOCK = 4      # copy the value while holding its bpf_spin_lock
@@ -43,6 +46,18 @@ class _ElemAttr(ctypes.Structure):
                 ("_pad", ctypes.c_uint32),
                 ("key", ctypes.c_uint64),
                 ("value", ctypes.c_uint64),
+                ("flags", ctypes.c_uint64)]
+
+
+class _BatchAttr(ctypes.Structure):
+    # the BPF_MAP_*_BATCH member
+    _fields_ = [("in_batch", ctypes.c_uint64),
+                ("out_batch", ctypes.c_uint64),
+                ("keys", ctypes.c_uint64),
+                ("values", ctypes.c_uint64),
+                ("count", ctypes.c_uint32),
+                ("map_fd", ctypes.c_uint32),
+                ("elem_flags", ctypes.c_uint64),
                 ("flags", ctypes.c_uint64)]
 
 
@@ -215,10 +230,47 @@ class BpfMap(_Pinned):
                 raise BpfError(errno.ERANGE, f"{self.path}: runaway key walk")
 
     def items(self, flags=0):
+        """All (key, value) pairs. Read in batches of thousands per syscall
+        where the kernel supports it (5.6+); a key-by-key walk costs two
+        syscalls per entry, a third of a second for a full srcstate map."""
+        batch = self._batch(flags)
+        if batch is not None:
+            return batch
+        out = []
         for key in self.keys():
             val = self.lookup(key, flags)
             if val is not None:     # it may have gone since keys() ran
-                yield key, val
+                out.append((key, val))
+        return out
+
+    def _batch(self, flags, chunk=4096):
+        """Every entry via BPF_MAP_LOOKUP_BATCH, or None if not supported."""
+        ks, vs = self.key_size, self.value_size
+        keys = ctypes.create_string_buffer(ks * chunk)
+        vals = ctypes.create_string_buffer(vs * chunk)
+        token_in, token_out = ctypes.create_string_buffer(8), ctypes.create_string_buffer(8)
+        out, first = [], True
+        while True:
+            attr = _BatchAttr(in_batch=0 if first else _addr(token_in),
+                              out_batch=_addr(token_out), keys=_addr(keys),
+                              values=_addr(vals), count=chunk, map_fd=self.fd,
+                              elem_flags=flags)
+            ctypes.set_errno(0)
+            rc = _bpf(MAP_LOOKUP_BATCH, attr)
+            err = ctypes.get_errno()
+            if attr.count:
+                kraw, vraw = keys.raw, vals.raw
+                out += [(kraw[i * ks:(i + 1) * ks], vraw[i * vs:(i + 1) * vs])
+                        for i in range(attr.count)]
+            if rc < 0:
+                if err == errno.ENOENT:         # that was the last batch
+                    return out
+                if first and err in (errno.EINVAL, ENOTSUPP):
+                    return None
+                ctypes.set_errno(err)
+                _raise("batch read of", self.path)
+            ctypes.memmove(token_in, token_out, 8)
+            first = False
 
     def sum_percpu(self, key):
         """Sum a per-CPU u64 across all CPU slots."""
@@ -227,3 +279,5 @@ class BpfMap(_Pinned):
             return 0
         return sum(struct.unpack_from("<Q", raw, i * 8)[0]
                    for i in range(self.ncpu))
+
+
